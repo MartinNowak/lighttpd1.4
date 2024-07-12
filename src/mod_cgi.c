@@ -1037,10 +1037,19 @@ URIHANDLER_FUNC(cgi_is_handled) {
 	/*if (buffer_is_blank(&r->physical.path)) return HANDLER_GO_ON;*/
 
 	mod_cgi_patch_config(r, p);
-	if (NULL == p->conf.cgi) return HANDLER_GO_ON;
+        if (NULL == p->conf.cgi) {
+            log_debug(r->conf.errh, __FILE__, __LINE__, "no cgi conf yet");
+            return HANDLER_GO_ON;
+        }
 
 	ds = (data_string *)array_match_key_suffix(p->conf.cgi, &r->physical.path);
-	if (NULL == ds) return HANDLER_GO_ON;
+        if (NULL == ds) {
+            log_debug(r->conf.errh, __FILE__, __LINE__, "no matching cgi key suffix: %s", r->physical.path.ptr);
+            return HANDLER_GO_ON;
+        } else {
+          log_debug(r->conf.errh, __FILE__, __LINE__,
+                    "matching cgi key suffix: %s", r->physical.path.ptr);
+        }
 
 	/* r->tmp_sce is set in http_response_physical_path_check() and is valid
 	 * in handle_subrequest_start callback -- handle_subrequest_start callbacks
@@ -1116,13 +1125,17 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 	plugin_data * const p = p_d;
 	handler_ctx * const hctx = r->plugin_ctx[p->id];
 	if (NULL == hctx) return HANDLER_GO_ON;
+        log_debug(r->conf.errh, __FILE__, __LINE__, "handle_subrequest");
 
 	if (__builtin_expect(
 	     (r->conf.stream_request_body & FDEVENT_STREAM_REQUEST_TCP_FIN), 0)
 	    && hctx->conf.limits && hctx->conf.limits->signal_fin) {
 		/* XXX: consider setting r->http_status = 499 if (0 == r->http_status)
 		 * (499 is nginx custom status to indicate client closed connection) */
-		if (-1 == hctx->fd) return HANDLER_ERROR; /*(CGI not yet spawned)*/
+               log_debug(r->conf.errh, __FILE__, __LINE__, "TCP FIN");
+               if (-1 == hctx->fd) {
+                    return HANDLER_ERROR; /*(CGI not yet spawned)*/
+                }
 		if (hctx->cgi_pid) /* send signal to notify CGI about TCP FIN */
 			cgi_pid_kill(hctx->cgi_pid, hctx->conf.limits->signal_fin);
 	}
@@ -1132,12 +1145,18 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 	if (rd_revents) {
 		hctx->rd_revents = 0;
 		handler_t rc = cgi_process_rd_revents(hctx, r, rd_revents);
-		if (rc != HANDLER_GO_ON) return rc; /*(might invalidate hctx)*/
+                if (rc != HANDLER_GO_ON) {
+                    log_debug(r->conf.errh, __FILE__, __LINE__, "cgi_process_rd_revents");
+                    return rc; /*(might invalidate hctx)*/
+                }
 	}
 	if (wr_revents) {
 		hctx->wr_revents = 0;
 		handler_t rc = cgi_process_wr_revents(hctx, r, wr_revents);
-		if (rc != HANDLER_GO_ON) return rc; /*(might invalidate hctx)*/
+                if (rc != HANDLER_GO_ON) {
+                    log_debug(r->conf.errh, __FILE__, __LINE__, "cgi_process_wr_revents");
+                    return rc; /*(might invalidate hctx)*/
+                }
 	}
 
 	if ((r->conf.stream_response_body & FDEVENT_STREAM_RESPONSE_BUFMIN)
@@ -1163,10 +1182,12 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 			r->conf.stream_request_body &= ~FDEVENT_STREAM_REQUEST_POLLIN;
 		} else {
 			handler_t rc = r->con->reqbody_read(r);
-			if (rc != HANDLER_GO_ON
-			    && !(hctx->conf.upgrade && -1 == hctx->fd
-			         && rc == HANDLER_WAIT_FOR_EVENT))
-				return rc;
+                        if (rc != HANDLER_GO_ON &&
+                            !(hctx->conf.upgrade && -1 == hctx->fd &&
+                              rc == HANDLER_WAIT_FOR_EVENT)) {
+                            log_debug(r->conf.errh, __FILE__, __LINE__, "con->reqbody_read");
+                            return rc;
+                        }
 		}
 	}
 
@@ -1180,19 +1201,26 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 				  ? http_response_reqbody_read_error(r, 411)
 				  : HANDLER_WAIT_FOR_EVENT;
 			}
-		if (cgi_create_env(r, p, hctx, hctx->cgi_handler)) {
-			r->http_status = 500;
+ 		if (cgi_create_env(r, p, hctx, hctx->cgi_handler)) {
+                        log_debug(r->conf.errh, __FILE__, __LINE__, "cgi_create_env failed");
+ 			r->http_status = 500;
 			r->handler_module = NULL;
 
 			return HANDLER_FINISHED;
-		}
+		} else {
+                  log_debug(r->conf.errh, __FILE__, __LINE__,
+                            "cgi_create_env succeeded");
+                }
 	} else if (!chunkqueue_is_empty(cq)) {
 		if (fdevent_fdnode_interest(hctx->fdntocgi) & FDEVENT_OUT)
 			return HANDLER_WAIT_FOR_EVENT;
 		if (0 != cgi_write_request(hctx, hctx->fdtocgi)) {
+                        log_debug(r->conf.errh, __FILE__, __LINE__, "cgi_write_request failed");
 			cgi_connection_close(hctx);
 			return HANDLER_ERROR;
-		}
+                } else {
+                        log_debug(r->conf.errh, __FILE__, __LINE__, "cgi_write_request succeeded");
+                }
 	}
 
 	/* if not done, wait for CGI to close stdout, so we read EOF on pipe */

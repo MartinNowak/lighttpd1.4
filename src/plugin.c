@@ -291,8 +291,10 @@ static handler_t plugins_call_fn_req_data(request_st * const r, const int e) {
     const plugin_fn_req_data *plfd = (const plugin_fn_req_data *)
       (((uintptr_t)plugin_slots) + offset);
     handler_t rc = HANDLER_GO_ON;
-    while (plfd->fn && (rc = plfd->fn(r, plfd->data)) == HANDLER_GO_ON)
-        ++plfd;
+    while (plfd->fn && (rc = plfd->fn(r, plfd->data)) == HANDLER_GO_ON) {
+        log_debug(r->conf.errh, __FILE__, __LINE__, "plugin call %d %s", e, plfd->data->self->name);
+      ++plfd;
+    }
     return rc;
 }
 

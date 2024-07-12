@@ -628,6 +628,8 @@ connection_state_machine_loop (request_st * const r, connection * const con)
 {
 	request_state_t ostate;
 	do {
+            log_debug(r->conf.errh, __FILE__, __LINE__,
+                      "connection_state_machine_loop r->state: %d", r->state);
 		switch ((ostate = r->state)) {
 		case CON_STATE_REQUEST_START: /* transient */
 			/*(should not be reached by HTTP/2 streams)*/
@@ -818,8 +820,10 @@ void
 connection_state_machine (connection * const con)
 {
     int rc = !con->fn || con->fn->process_streams(con, http_response_handler,
-                                                       connection_handle_write);
-    request_st * const r = &con->request;
+                                                connection_handle_write);
+    request_st *const r = &con->request;
+    log_debug(r->conf.errh, __FILE__, __LINE__,
+              "connection_state_machine rc: %d", rc);
     if (rc)
         connection_state_machine_loop(r, con);
     connection_set_fdevent_interest(r, con);

@@ -416,7 +416,11 @@ http_response_prepare (request_st * const r)
 
 		/* request handler selection */
 		rc = plugins_call_handle_subrequest_start(r);
-		if (HANDLER_GO_ON != rc) return rc;
+                if (HANDLER_GO_ON != rc) {
+                    log_debug(r->conf.errh, __FILE__, __LINE__,
+                              "plugins_call_handle_subrequest_start: %i", NULL != r->handler_module ? 1 : 0);
+                  return rc;
+                }
 
 		if (NULL != r->handler_module) return HANDLER_GO_ON;
 
@@ -847,8 +851,11 @@ http_response_handler (request_st * const r)
     const plugin *p = r->handler_module;
     if (NULL != p
         || ((rc = http_response_prepare(r)) == HANDLER_GO_ON
-            && NULL != (p = r->handler_module)))
+            && NULL != (p = r->handler_module))) {
         rc = p->handle_subrequest(r, p->data);
+        log_debug(r->conf.errh, __FILE__, __LINE__,
+                  "handle_subrequest %s rc: %d", p->name, rc);
+    }
 
     switch (rc) {
       case HANDLER_WAIT_FOR_EVENT:
@@ -856,12 +863,16 @@ http_response_handler (request_st * const r)
             && (!r->resp_body_started
                 || 0 == (r->conf.stream_response_body
                          & (FDEVENT_STREAM_RESPONSE
-                           |FDEVENT_STREAM_RESPONSE_BUFMIN))))
-            return HANDLER_WAIT_FOR_EVENT; /* come back here */
+                            |FDEVENT_STREAM_RESPONSE_BUFMIN)))) {
+                 log_debug(r->conf.errh, __FILE__, __LINE__,
+                           "http_response_handler HANDLER_WAIT_FOR_EVENT %s", p->name);
+                 return HANDLER_WAIT_FOR_EVENT; /* come back here */
+        }
         /* response headers received from backend; start response */
         __attribute_fallthrough__
       case HANDLER_GO_ON:
       case HANDLER_FINISHED:
+        log_debug(r->conf.errh, __FILE__, __LINE__, "http_response_handler %d", r->http_status);
         if (r->http_status == 0) r->http_status = 200;
         if ((__builtin_expect( (r->http_status < 400), 1)
              && __builtin_expect( (0 == r->error_handler_saved_status), 1))

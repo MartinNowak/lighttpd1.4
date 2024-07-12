@@ -943,7 +943,8 @@ h2_parse_frame_settings (connection * const con, const uint8_t *s, uint32_t len)
     /*(caller must validate frame len, frame type == 0x04, frame id == 0)*/
     h2con * const h2c = (h2con *)con->hx;
     for (; len >= 6; len -= 6, s += 6) {
-        uint32_t v = h2_u32(s+2);
+        uint32_t v = h2_u32(s + 2);
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_parse_frame_settings %d", h2_u16(s));
         switch (h2_u16(s)) {
           case H2_SETTINGS_HEADER_TABLE_SIZE:
             /* encoder may use any table size <= value sent by peer */
@@ -1009,6 +1010,7 @@ h2_parse_frame_settings (connection * const con, const uint8_t *s, uint32_t len)
     }
 
     if (len) {
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_parse_frame_settings len %u", len);
         h2_send_goaway_e(con, H2_E_FRAME_SIZE_ERROR);
         return;
     }
@@ -1024,7 +1026,8 @@ h2_recv_settings (connection * const con, const uint8_t * const s, const uint32_
 {
     /*(s must be entire SETTINGS frame, len must be the frame length field)*/
     /*assert(s[3] == H2_FTYPE_SETTINGS);*/
-    if (0 != h2_u31(s+5)) {/*(SETTINGS stream id must be 0)*/
+    if (0 != h2_u31(s + 5)) { /*(SETTINGS stream id must be 0)*/
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_recv_settings streamid 0 != %u", h2_u31(s + 5));
         h2_send_goaway_e(con, H2_E_PROTOCOL_ERROR);
         return;
     }
@@ -1040,12 +1043,16 @@ h2_recv_settings (connection * const con, const uint8_t * const s, const uint32_
          * so this does not have to handle another SETTINGS frame being sent
          * before receiving an ACK from prior SETTINGS frame.  (If it does,
          * then we will need some sort of counter.) */
-        if (0 != len)
+        if (0 != len) {
+            log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_recv_settings ack 0 != %u", len);
             h2_send_goaway_e(con, H2_E_FRAME_SIZE_ERROR);
-        else if (h2c->sent_settings)
+        } else if (h2c->sent_settings)
             h2c->sent_settings = 0;
-        else /* SETTINGS with ACK for SETTINGS frame we did not send */
-            h2_send_goaway_e(con, H2_E_PROTOCOL_ERROR);
+        else /* SETTINGS with ACK for SETTINGS frame we did not send */ {
+          log_error(con->request.conf.errh, __FILE__, __LINE__,
+                    "h2_recv_settings ack for unknown settings");
+           h2_send_goaway_e(con, H2_E_PROTOCOL_ERROR);
+        }
     }
 }
 
@@ -1966,6 +1973,7 @@ h2_parse_frames (connection * const con)
         /*(handle PUSH_PROMISE as connection error further below)*/
         /*if (s[3] == H2_FTYPE_HEADERS || s[3] == H2_FTYPE_PUSH_PROMISE)*/
 
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_parse_frame H2_FTYPE %d", s[3]);
         if (s[3] == H2_FTYPE_HEADERS) {
             if (clen < 9+flen) {
                 clen = h2_frame_cq_compact(cq, 9+flen);
@@ -3397,6 +3405,7 @@ h2_process_streams (connection * const con,
     if (h2c->sent_goaway <= 0
         && (chunkqueue_is_empty(con->read_queue) || h2_parse_frames(con))
         && con->is_readable > 0) {
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_process_streams read con");
         chunkqueue * const cq = con->read_queue;
         const off_t mark = cq->bytes_in;
         if (0 == con->network_read(con, cq, MAX_READ_LIMIT)) {
@@ -3404,14 +3413,16 @@ h2_process_streams (connection * const con,
                 h2_parse_frames(con);
         }
         else {
-            /* network error; do not send GOAWAY, but pretend that we did */
+            log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_process_streams read con network error");
+           /* network error; do not send GOAWAY, but pretend that we did */
             h2c->sent_goaway = H2_E_CONNECT_ERROR; /*any error (not NO_ERROR)*/
             request_st * const h2r = &con->request;
             request_set_state_error(h2r, CON_STATE_ERROR); /*connection error*/
         }
     }
 
-    /* process requests on HTTP/2 streams */
+    log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2c->sent_goaway %d h2c->rused %u", h2c->sent_goaway, h2c->rused);
+   /* process requests on HTTP/2 streams */
     int resched = 0;
     if (h2c->sent_goaway <= 0 && h2c->rused) {
       #if 0
@@ -3443,11 +3454,13 @@ h2_process_streams (connection * const con,
             /* future: might track read/write interest per request
              * to avoid iterating through all active requests */
             /* specialized connection_state_machine_loop() for h2 streams */
-            switch (r->state) {
+            log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_process_streams r->state %d", r->state);
+             switch (r->state) {
               case CON_STATE_READ_POST:
               case CON_STATE_HANDLE_REQUEST:
                 {
                     const handler_t rc = http_response_loop(r);
+                    log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_process_streams http_response_loop %d", rc);
                     if (rc >= HANDLER_WAIT_FOR_EVENT) {
                         if (rc > HANDLER_WAIT_FOR_EVENT) {
                             /*HANDLER_ERROR or HANDLER_COMEBACK (not expected)*/
@@ -3594,6 +3607,7 @@ h2_process_streams (connection * const con,
         return 0;
     }
     else { /* e.g. CON_STATE_RESPONSE_END or CON_STATE_ERROR */
+        log_debug(con->request.conf.errh, __FILE__, __LINE__, "h2_process_streams retire_conf %d", h2r->state);
         h2_retire_con(h2r, con);
         return 1;
     }
