@@ -623,7 +623,7 @@ h2_recv_rst_stream (connection * const con, const uint8_t * const s, const uint3
      * (stream id may have been closed recently and server forgot about it,
      *  but client (peer) sent RST_STREAM prior to receiving stream end from
      *  server)*/
-  #if 0
+  #if 1
     if (h2c->sent_goaway && h2c->h2_cid < id) return;
     h2_send_goaway_e(con, H2_E_PROTOCOL_ERROR);
   #else
