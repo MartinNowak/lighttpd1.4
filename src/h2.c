@@ -378,9 +378,10 @@ h2_send_goaway_rst_stream (connection * const con)
 }
 
 
-static void
-h2_send_goaway (connection * const con, const request_h2error_t e)
-{
+static void h2_send_goaway(connection *const con, const request_h2error_t e,
+                           const char *const filename,
+                           const unsigned int line) {
+    log_debug(NULL, filename, line, "h2_send_goaway: %d", e);
     /* future: RFC 7540 Section 6.8 notes that server initiating graceful
      * connection shutdown SHOULD send GOAWAY with stream id 2^31-1 and a
      * NO_ERROR code, and later send another GOAWAY with an updated last
@@ -421,12 +422,7 @@ h2_send_goaway (connection * const con, const request_h2error_t e)
 }
 
 
-__attribute_cold__
-static void
-h2_send_goaway_e (connection * const con, const request_h2error_t e)
-{
-    h2_send_goaway(con, e);
-}
+#define h2_send_goaway_e(con, e) h2_send_goaway(con, e, __FILE__, __LINE__)
 
 
 __attribute_cold__
@@ -563,7 +559,7 @@ h2_recv_goaway (connection * const con, const uint8_t * const s, uint32_t len)
 
     /* send PROTOCOL_ERROR back to peer if peer sent an error code
      * (i.e. not NO_ERROR) in order to terminate connection more quickly */
-    h2_send_goaway(con, e==H2_E_NO_ERROR ? H2_E_NO_ERROR : H2_E_PROTOCOL_ERROR);
+    h2_send_goaway_e(con, e==H2_E_NO_ERROR ? H2_E_NO_ERROR : H2_E_PROTOCOL_ERROR);
     h2con * const h2c = (h2con *)con->hx;
     if (0 == h2c->rused) return 0;
     return 1;
@@ -2181,7 +2177,7 @@ h2_send_goaway_graceful (connection * const con)
     if (h2r->state == CON_STATE_WRITE) {
         h2con * const h2c = (h2con *)con->hx;
         if (!h2c->sent_goaway) {
-            h2_send_goaway(con, H2_E_NO_ERROR);
+            h2_send_goaway_e(con, H2_E_NO_ERROR);
             changed = 1;
         }
       #if 0
@@ -3184,7 +3180,7 @@ h2_retire_con (request_st * const h2r, connection * const con)
     h2con * const h2c = (h2con *)con->hx;
 
     if (h2r->state != CON_STATE_ERROR) { /*(CON_STATE_RESPONSE_END)*/
-        h2_send_goaway(con, H2_E_NO_ERROR);
+        h2_send_goaway_e(con, H2_E_NO_ERROR);
         for (uint32_t i = 0, rused = h2c->rused; i < rused; ++i) {
             /*(unexpected if CON_STATE_RESPONSE_END)*/
             request_st * const r = h2c->r[i];
@@ -3376,12 +3372,12 @@ h2_send_goaway_delayed (connection * const con)
     if (h2r->keep_alive >= 0) {
         if (config_feature_bool(con->srv, "auth.http-goaway-invalid-creds", 1)){
             h2r->keep_alive = -1;
-            h2_send_goaway(con, H2_E_NO_ERROR);
+            h2_send_goaway_e(con, H2_E_NO_ERROR);
         }
         http_response_delay(con);
     }
     else /*(abort connection upon second request to close h2 connection)*/
-        h2_send_goaway(con, H2_E_ENHANCE_YOUR_CALM);
+        h2_send_goaway_e(con, H2_E_ENHANCE_YOUR_CALM);
 }
 
 
@@ -3594,6 +3590,8 @@ h2_process_streams (connection * const con,
         return 0;
     }
     else { /* e.g. CON_STATE_RESPONSE_END or CON_STATE_ERROR */
+        log_debug(NULL, __FILE__, __LINE__,
+                  "h2_retire_con h2r->state: %d", h2r->state);
         h2_retire_con(h2r, con);
         return 1;
     }
@@ -3625,7 +3623,7 @@ h2_check_timeout (connection * const con, const unix_time64_t cur_ts)
                         /* time - out */
                         if (rr->conf.log_timeouts) {
                             log_debug(rr->conf.errh, __FILE__, __LINE__,
-                              "request aborted - read timeout: %d", con->fd);
+                                      "request aborted - read timeout: %d %ld %ld", con->fd, cur_ts, con->read_idle_ts);
                         }
                         connection_set_state_error(r, CON_STATE_ERROR);
                         changed = 1;
@@ -3663,8 +3661,8 @@ h2_check_timeout (connection * const con, const unix_time64_t cur_ts)
                 /* time - out */
                 if (r->conf.log_timeouts) {
                     log_debug(r->conf.errh, __FILE__, __LINE__,
-                              "connection closed - keep-alive timeout: %d",
-                              con->fd);
+                              "connection closed - keep-alive timeout: %d %ld %ld",
+                              con->fd, cur_ts, con->read_idle_ts);
                 }
                 connection_set_state(r, CON_STATE_RESPONSE_END);
                 changed = 1;
